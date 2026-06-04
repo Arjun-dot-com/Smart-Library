@@ -17,7 +17,7 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Smart Library API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], # Your Vite React port
+    allow_origins=["http://localhost:5173"], # Vite React port
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -246,3 +246,49 @@ def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
         "user_id": user.id, 
         "role": user.role
     }
+
+@app.get("/issued/{user_id}")
+def get_user_issued_books(user_id: int, db: Session = Depends(get_db)):
+    """Returns books the user currently has issued."""
+    # BUG FIX: We check status == "issued", not return_date == None
+    active_issues = db.query(models.IssueLog).filter(
+        models.IssueLog.user_id == user_id,
+        models.IssueLog.status == "issued" 
+    ).all()
+    
+    issued_books = []
+    for issue in active_issues:
+        book = db.query(models.Book).filter(models.Book.id == issue.book_id).first()
+        if book:
+            issued_books.append({
+                "issue_id": issue.id,
+                "book_id": book.id,
+                "title": book.title,
+                "author": book.author,
+                "issue_date": issue.issue_date
+            })
+    return issued_books
+
+@app.get("/users/{user_id}")
+def get_user_info(user_id: int, db: Session = Depends(get_db)):
+    """Fetches basic profile info for the dashboard header"""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    return {"name": user.name, "email": user.email}
+
+@app.get("/admin/student_logs")
+def get_student_logs(db: Session = Depends(get_db)):
+    """Compiles a master list of all students, their active books, and unpaid fines"""
+    students = db.query(models.User).filter(models.User.role == "student").all()
+    logs = []
+    for student in students:
+        fines = db.query(models.Fine).filter(models.Fine.user_id == student.id, models.Fine.paid == False).all()
+        active_issues = db.query(models.IssueLog).filter(models.IssueLog.user_id == student.id, models.IssueLog.status == "issued").all()
+        
+        logs.append({
+            "id": student.id,
+            "name": student.name,
+            "email": student.email,
+            "pending_fines": sum(f.amount for f in fines),
+            "active_issues_count": len(active_issues)
+        })
+    return logs
