@@ -103,7 +103,7 @@ function Register() {
 // --- 3. LIBRARIAN ADMIN PANEL ---
 function LibrarianDashboard({ setAuth }) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('inventory'); // Tab state manager
+  const [activeTab, setActiveTab] = useState('inventory');
   
   const [books, setBooks] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -119,7 +119,7 @@ function LibrarianDashboard({ setAuth }) {
     const [booksRes, catRes, logsRes] = await Promise.all([
       api.get('/books/search/'), 
       api.get('/categories/'),
-      api.get('/admin/student_logs') // Fetch the new student data
+      api.get('/admin/student_logs')
     ]);
     setBooks(booksRes.data);
     setCategories(catRes.data);
@@ -137,8 +137,7 @@ function LibrarianDashboard({ setAuth }) {
     try {
       await api.post('/categories/', { name: newCat });
       showMsg('success', 'NODE ADDED: Category initialized.');
-      setNewCat('');
-      fetchData();
+      setNewCat(''); fetchData();
     } catch (err) { showMsg('error', 'ERR: Category creation failed.'); }
   };
 
@@ -152,10 +151,63 @@ function LibrarianDashboard({ setAuth }) {
     } catch (err) { showMsg('error', err.response?.data?.detail || 'ERR: Asset registration failed.'); }
   };
 
+  const handleUpdateStock = async (bookId, currentTotal) => {
+    const newVal = window.prompt(`Enter the NEW total number of units for this asset (Current Total: ${currentTotal}):`);
+    if (!newVal) return; // Librarian clicked cancel
+    
+    const newTotal = parseInt(newVal);
+    if (isNaN(newTotal) || newTotal < 1) {
+      showMsg('error', 'ERR: Invalid mathematical value entered.');
+      return;
+    }
+
+    try {
+      await api.patch(`/books/${bookId}/copies`, { new_total: newTotal });
+      showMsg('success', `INVENTORY UPDATED: Stock modified to ${newTotal} units.`);
+      fetchData(); // Instantly refresh the table
+    } catch (err) {
+      showMsg('error', err.response?.data?.detail || 'ERR: Modification request denied.');
+    }
+  };
+
+  const handleDeleteBook = async (bookId) => {
+    if (!window.confirm("CRITICAL WARNING: This will force-purge the asset and instantly rip it out of the active assignments of any student currently holding it. Proceed?")) return;
+    try {
+      await api.delete(`/books/${bookId}`);
+      showMsg('success', 'ASSET PURGED: Record removed from grid.');
+      fetchData(); 
+    } catch (err) { showMsg('error', err.response?.data?.detail || 'ERR: Purge request denied.'); }
+  };
+
+  // --- NEW: Student Management Functions ---
+  const handleAddFee = async (userId) => {
+    const amountStr = window.prompt("Enter penalty fee amount (₹) to add to this user node:");
+    if (!amountStr) return; // User clicked cancel
+    
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      showMsg('error', 'ERR: Invalid mathematical value entered.');
+      return;
+    }
+
+    try {
+      await api.post('/admin/fines/', { user_id: userId, amount: amount });
+      showMsg('success', `PENALTY APPLIED: ₹${amount} added to user debt.`);
+      fetchData();
+    } catch (err) { showMsg('error', 'ERR: Failed to apply penalty.'); }
+  };
+
+  const handlePurgeUser = async (userId) => {
+    if (!window.confirm("CRITICAL WARNING: This will permanently vaporize this student node, wipe their debt, and force-return their active assets to the global grid. Proceed?")) return;
+    try {
+      await api.delete(`/users/${userId}`);
+      showMsg('success', 'NODE PURGED: User removed from system.');
+      fetchData(); 
+    } catch (err) { showMsg('error', err.response?.data?.detail || 'ERR: Purge request denied.'); }
+  };
+
   const handleLogout = () => {
-    localStorage.clear();
-    setAuth(false);
-    navigate('/login');
+    localStorage.clear(); setAuth(false); navigate('/login');
   };
 
   return (
@@ -167,7 +219,6 @@ function LibrarianDashboard({ setAuth }) {
 
       {message && <div className={`cyber-alert ${message.type}`}>{message.text}</div>}
 
-      {/* ADMIN TABS */}
       <div className="flex-row" style={{ marginBottom: '2rem', gap: '1rem' }}>
         <button onClick={() => setActiveTab('inventory')} className="cyber-btn" style={{ width: 'auto', background: activeTab === 'inventory' ? 'var(--neon-blue)' : 'transparent', color: activeTab === 'inventory' ? 'var(--bg-dark)' : 'var(--neon-blue)' }}>
           [ Asset Inventory ]
@@ -206,7 +257,7 @@ function LibrarianDashboard({ setAuth }) {
             </section>
           </div>
 
-          <section className="glass-panel">
+<section className="glass-panel">
             <h3>[ Global Inventory Grid ]</h3>
             <table className="cyber-table">
               <thead>
@@ -215,6 +266,7 @@ function LibrarianDashboard({ setAuth }) {
                   <th>Creator</th>
                   <th>ID Hash</th>
                   <th>Status</th>
+                  <th>System Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -224,6 +276,28 @@ function LibrarianDashboard({ setAuth }) {
                     <td>{book.author}</td>
                     <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{book.barcode}</td>
                     <td><span className={`inventory-badge ${book.available_copies > 0 ? 'in-stock' : 'out-stock'}`}>{book.available_copies} / {book.total_copies} UNITS</span></td>
+                    
+                    {/* --- THE UPDATED SYSTEM ACTION CELL --- */}
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button 
+                          onClick={() => handleUpdateStock(book.id, book.total_copies)} 
+                          className="cyber-btn" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', width: 'auto', borderColor: '#3498db', color: '#3498db' }}
+                        >
+                          Modify Stock
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteBook(book.id)} 
+                          className="cyber-btn danger" 
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', width: 'auto' }}
+                        >
+                          Purge
+                        </button>
+                      </div>
+                    </td>
+                    {/* -------------------------------------- */}
+
                   </tr>
                 ))}
               </tbody>
@@ -240,6 +314,7 @@ function LibrarianDashboard({ setAuth }) {
                 <th>Comm Link (Email)</th>
                 <th>Active Assets</th>
                 <th>Pending Penalty Fees</th>
+                <th>System Action</th> {/* NEW COLUMN */}
               </tr>
             </thead>
             <tbody>
@@ -255,6 +330,17 @@ function LibrarianDashboard({ setAuth }) {
                       ₹ {student.pending_fines.toFixed(2)}
                     </span>
                   </td>
+                  {/* NEW ACTION BUTTONS */}
+                  <td>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button onClick={() => handleAddFee(student.id)} className="cyber-btn" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', width: 'auto', borderColor: '#f1c40f', color: '#f1c40f' }}>
+                        + Apply Penalty
+                      </button>
+                      <button onClick={() => handlePurgeUser(student.id)} className="cyber-btn danger" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', width: 'auto' }}>
+                        Purge Node
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -264,7 +350,6 @@ function LibrarianDashboard({ setAuth }) {
     </div>
   );
 }
-
 // --- 4. STUDENT DASHBOARD ---
 function Dashboard({ setAuth }) {
   const navigate = useNavigate();
