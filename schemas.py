@@ -93,3 +93,10 @@ class TokenResponse(BaseModel):
     token_type: str
     user_id: int
     role: str
+
+class ManualFineRequest(BaseModel):
+    user_id: int
+    amount: float
+
+class UpdateCopiesRequest(BaseModel):
+    new_total: int

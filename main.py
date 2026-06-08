@@ -292,3 +292,86 @@ def get_student_logs(db: Session = Depends(get_db)):
             "active_issues_count": len(active_issues)
         })
     return logs
+
+@app.delete("/books/{book_id}")
+def delete_book(book_id: int, db: Session = Depends(get_db)):
+    """Removes a book from the catalog permanently, regardless of issue status."""
+    book = db.query(models.Book).filter(models.Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    # 1. THE OVERRIDE: Delete all issue logs associated with this book first.
+    # This rips the book out of the hands of any student who currently has it,
+    # and prevents SQLite from crashing due to orphaned foreign keys.
+    db.query(models.IssueLog).filter(models.IssueLog.book_id == book_id).delete()
+    
+    # 2. Purge the book itself
+    db.delete(book)
+    db.commit()
+    
+    return {"detail": "Asset and all associated records FORCE PURGED successfully"}
+
+@app.post("/admin/fines/")
+def add_manual_fine(req: schemas.ManualFineRequest, db: Session = Depends(get_db)):
+    """Allows librarians to manually add a penalty fee to a user."""
+    # Create a new unpaid fine without a return_id (since it's manual)
+    new_fine = models.Fine(
+        user_id=req.user_id,
+        amount=req.amount,
+        paid=False
+    )
+    db.add(new_fine)
+    db.commit()
+    return {"detail": "Penalty fee applied successfully."}
+
+@app.delete("/users/{user_id}")
+def purge_student_node(user_id: int, db: Session = Depends(get_db)):
+    """Permanently deletes a user and restores their checked-out books to inventory."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Node not found")
+        
+    # 1. Look for books they currently have and restore the global inventory
+    active_issues = db.query(models.IssueLog).filter(
+        models.IssueLog.user_id == user_id, 
+        models.IssueLog.status == "issued"
+    ).all()
+    
+    for issue in active_issues:
+        book = db.query(models.Book).filter(models.Book.id == issue.book_id).first()
+        if book:
+            book.available_copies += 1
+
+    # 2. Vaporize all their associated history and fines
+    db.query(models.IssueLog).filter(models.IssueLog.user_id == user_id).delete()
+    db.query(models.Fine).filter(models.Fine.user_id == user_id).delete()
+    
+    # 3. Vaporize the user
+    db.delete(user)
+    db.commit()
+    
+    return {"detail": "User node completely purged from system."}
+
+@app.patch("/books/{book_id}/copies")
+def update_book_copies(book_id: int, req: schemas.UpdateCopiesRequest, db: Session = Depends(get_db)):
+    """Updates the total inventory count for a specific book."""
+    book = db.query(models.Book).filter(models.Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="Asset not found in grid")
+    
+    # Calculate exactly how many copies are currently out in the field
+    copies_checked_out = book.total_copies - book.available_copies
+    
+    # Block the admin from setting the total lower than what is currently checked out
+    if req.new_total < copies_checked_out:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"ERR: Cannot reduce total below {copies_checked_out}. Those units are currently assigned to user nodes."
+        )
+    
+    # Apply the mathematical update
+    book.total_copies = req.new_total
+    book.available_copies = req.new_total - copies_checked_out
+    
+    db.commit()
+    return {"detail": "Inventory stock updated successfully"}
